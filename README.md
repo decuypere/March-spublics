@@ -187,9 +187,30 @@ veille run -s ted --mode manual
 
 ---
 
-## 6. Planification quotidienne
+## 6. Application Mac
 
-**cron (recommandé)** :
+Pour ouvrir la veille depuis le Dock, sans Terminal :
+
+```bash
+./scripts/build_macos_app.sh      # cree deux applications dans ~/Applications
+./scripts/install_launchd.sh      # collecte automatique quotidienne
+```
+
+| Application | Rôle |
+|---|---|
+| **Veille marchés publics** | ouvre la liste (démarre le serveur si besoin) |
+| **Veille - Collecte** | lance une collecte et affiche le résumé |
+
+Guide complet, y compris l'avertissement macOS au premier lancement :
+[`docs/MACOS.md`](docs/MACOS.md).
+
+---
+
+## 7. Planification quotidienne
+
+Sur Mac, préférez `launchd` (section précédente). Sur Linux ou serveur :
+
+**cron** :
 
 ```cron
 0 7 * * * /chemin/vers/March-spublics/scripts/run-daily.sh >> /chemin/vers/March-spublics/data/logs/cron.log 2>&1
@@ -203,7 +224,7 @@ dédiée : `scripts/veille-web.service`.
 
 ---
 
-## 7. Configuration
+## 8. Configuration
 
 Tout est dans `config/config.yaml` (`config/config.example.yaml` sert de valeurs
 par défaut et de documentation). Les secrets passent par variables
@@ -239,7 +260,7 @@ s'il n'y a aucune nouveauté (`skip_if_empty`).
 
 ---
 
-## 8. Ajouter une source
+## 9. Ajouter une source
 
 L'architecture est modulaire : un connecteur = une classe.
 
@@ -269,7 +290,7 @@ couvrent déjà beaucoup de cas sans programmation.
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 ```bash
 pytest -q          # 87 tests, aucun accès réseau
@@ -286,7 +307,7 @@ de production, et pas seulement sur des fixtures.
 
 ---
 
-## 10. Structure
+## 11. Structure
 
 ```
 src/veille_mp/
@@ -303,11 +324,18 @@ src/veille_mp/
 ├── connectors/         ted, rss, http_search, sample
 ├── notify/             digest HTML/CSV/MD + email SMTP
 └── web/                interface Flask
+
+scripts/
+├── build_macos_app.sh  fabrique les applications macOS
+├── install_launchd.sh  collecte quotidienne sur Mac
+├── make_icon.py        icone de l'application (sans dependance)
+├── run-daily.sh        point d'entree cron
+└── veille*.service     unites systemd (Linux)
 ```
 
 ---
 
-## 11. Limites connues
+## 12. Limites connues
 
 - Le connecteur belge `http_search` demande une configuration manuelle de
   l'endpoint : aucune API publique documentée n'a pu être confirmée.
