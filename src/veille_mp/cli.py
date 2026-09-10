@@ -135,17 +135,28 @@ def cmd_fields(args: argparse.Namespace) -> int:
         for spec in specs:
             connector = build_connector(spec, http, RobotsGate(http, enabled=False), config.data)
             supported = connector.discover_fields()
+
+            if args.raw:
+                print(f"\n[{spec.get('name')}] reponse brute de l'API:")
+                print(connector.last_fields_error_body or "(vide)")
+                continue
+
             if not supported:
-                print(f"[{spec.get('name')}] l'API n'a pas annonce de liste de champs.")
+                print(f"[{spec.get('name')}] l'API n'a pas annonce de liste de champs. "
+                      "Utilisez --raw pour voir sa reponse telle quelle.")
                 continue
 
             print(f"\n[{spec.get('name')}] {len(supported)} champs supportes")
             retained = [f for f in MINIMAL_FIELDS if f in supported]
+            if not retained:
+                print("  ATTENTION: aucun champ du socle dans cette liste, alors qu'ils")
+                print("  fonctionnent. La liste est vraisemblablement tronquee.")
+                print("  Relancez avec --raw et transmettez la reponse brute.")
             extras = select_extra_fields(supported, retained)
             print(f"  Socle utilise      : {', '.join(retained) or 'aucun'}")
             print(f"  Enrichissements    : {', '.join(extras) or 'aucun'}")
             manquants = [f for f in MINIMAL_FIELDS if f not in supported]
-            if manquants:
+            if manquants and retained:
                 print(f"  Socle non supporte : {', '.join(manquants)}")
 
             if args.all:
@@ -360,6 +371,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_fields = sub.add_parser("fields", help="champs acceptes par l'API TED")
     p_fields.add_argument("-s", "--source", help="nom de la source TED a interroger")
     p_fields.add_argument("--all", action="store_true", help="lister tous les champs")
+    p_fields.add_argument("--raw", action="store_true",
+                          help="afficher la reponse brute de l'API (diagnostic)")
     p_fields.set_defaults(func=cmd_fields)
 
     p_test = sub.add_parser("test", help="veille ponctuelle immediate (mode test)")

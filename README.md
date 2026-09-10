@@ -105,7 +105,7 @@ Score entre 0 et 1, seuil configurable (`filtering.min_score`, défaut 0.5) :
 | CPV cœur de métier (`71200000`, `71220000`, `71221000`…) | 1.0 — l'avis est **toujours** conservé |
 | Avis portant plus de 8 codes CPV (accord-cadre fourre-tout) | pénalité de 0.55 |
 | CPV périphérique (`71240000`, `71241000`, `71242000`, `71248000`) | 0.35 à 0.40 — un mot-clé est nécessaire |
-| CPV dans une famille surveillée (`712…`) mais hors liste | 0.6 |
+| CPV dans une famille surveillée (`712…`) mais hors liste | 0.45 — sous le seuil, un mot-clé est requis |
 | Mot-clé dans le titre | 0.45 (+0.1 par mot-clé supplémentaire) |
 | Mot-clé dans la description | 0.2 |
 | Mot-clé d'exclusion | rejet immédiat |
@@ -167,7 +167,7 @@ sources, et rien de ce qui a déjà été collecté n'est perdu. La fenêtre gli
 |---|---|
 | `veille init` | crée `config/config.yaml` depuis l'exemple |
 | `veille doctor` | teste l'accès à chaque source (endpoints, robots.txt) |
-| `veille fields` | liste les champs que l'API TED accepte réellement |
+| `veille fields` | liste les champs que l'API TED accepte réellement (`--all`, `--raw`) |
 | `veille test` | **mode test** : veille ponctuelle immédiate, sans écriture |
 | `veille run` | veille complète : collecte, stockage, digest, email |
 | `veille list` | liste les avis stockés (filtres, `--json`) |
@@ -272,7 +272,7 @@ couvrent déjà beaucoup de cas sans programmation.
 ## 9. Tests
 
 ```bash
-pytest -q          # 82 tests, aucun accès réseau
+pytest -q          # 87 tests, aucun accès réseau
 ```
 
 Les tests couvrent : normalisation multilingue eForms, les deux dialectes de

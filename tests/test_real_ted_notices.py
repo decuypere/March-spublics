@@ -167,3 +167,22 @@ def test_dilution_is_lifted_by_an_architecture_keyword():
     titre = "Raamovereenkomst architectuuropdracht voor diverse gebouwen"
     verdict = engine.evaluate(notice(titre, ACCORD_CADRE_ROUTIER[1], buyer="Vlaamse Overheid"))
     assert verdict.keep
+
+
+def test_cpv_family_alone_no_longer_passes_the_threshold():
+    """71222100 (cartographie des zones urbaines) n'est pas dans la liste mais
+    appartient a la famille 712: un cadastre du bruit remontait a 0.60."""
+    engine = RelevanceFilter(CFG)
+    verdict = engine.evaluate(notice(
+        "Belgique - Services de cartographie des zones urbaines - Cadastre 2026 du "
+        "bruit des transports pour la Region de Bruxelles-Capitale",
+        ["71222100"], buyer="Bruxelles Environnement"))
+    assert not verdict.keep, f"score {verdict.score}"
+
+
+def test_cpv_family_plus_keyword_still_passes():
+    engine = RelevanceFilter(CFG)
+    verdict = engine.evaluate(notice(
+        "Concours d'architecture pour un nouveau centre sportif",
+        ["71230000"], buyer="Ville de Namur"))
+    assert verdict.keep

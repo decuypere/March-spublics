@@ -314,3 +314,49 @@ def test_discover_fields_queries_with_an_invalid_field():
     connector, http = build(handler)
     assert connector.discover_fields() == ["alpha-lot", "beta-lot"]
     assert http.calls[0][2]["json"]["fields"] == ["__champ-invalide__"]
+
+
+def test_supported_field_list_survives_exotic_field_names():
+    """Un nom de champ contenant une parenthese ou un point coupait la liste:
+    l'API en annoncait ~200, le connecteur n'en lisait que 6."""
+    from veille_mp.connectors.ted import parse_supported_fields
+
+    body = ('{"message":"Parameter \'fields\' contains unsupported value (supported '
+            'values are: sme-part,touchpoint-gateway-ted-esen,BT-09(a)-Procedure,'
+            'organisation-name.buyer,submission-url-lot,notice-title,'
+            'estimated-value-lot)"}')
+    supported = parse_supported_fields(body)
+
+    assert len(supported) == 7
+    assert "BT-09(a)-Procedure" in supported
+    assert "organisation-name.buyer" in supported
+    assert "estimated-value-lot" in supported, "les champs apres un nom exotique sont perdus"
+
+
+def test_unparsable_field_list_does_not_produce_an_empty_request():
+    """Si la liste analysee ne contient aucun champ du socle, c'est l'analyse
+    qui a echoue: on garde le socle plutot que d'envoyer une requete vide."""
+    attempts = []
+
+    def handler(method, url, kwargs):
+        fields = kwargs["json"]["fields"]
+        attempts.append(list(fields))
+        if fields != MINIMAL_FIELDS:
+            return FakeResponse(
+                status_code=400, payload=None,
+                text="unsupported value (supported values are: alpha-lot,beta-lot)",
+            )
+        page = kwargs["json"].get("page", 1)
+        return FakeResponse(payload={"notices": [EFORMS_NOTICE] if page == 1 else []})
+
+    connector, _ = build(handler)
+    assert len(connector.fetch()) == 1
+    assert attempts[-1] == MINIMAL_FIELDS
+    assert all(a for a in attempts), "aucune requete ne doit partir sans champs"
+
+
+def test_raw_error_body_is_kept_for_diagnosis():
+    body = "unsupported value (supported values are: alpha-lot,beta-lot)"
+    connector, _ = build(lambda *a: FakeResponse(status_code=400, payload=None, text=body))
+    connector.discover_fields()
+    assert connector.last_fields_error_body == body

@@ -133,9 +133,11 @@ def _extract_url(payload: dict, publication_number: str) -> str:
     return ""
 
 
-SUPPORTED_FIELDS_RE = re.compile(
-    r"supported values are:\s*([A-Za-z0-9_,\-\s]+)", re.IGNORECASE
-)
+SUPPORTED_FIELDS_LABEL = "supported values are"
+# Un nom de champ peut contenir un point ou des parentheses (termes eForms du
+# type "BT-09(a)-Procedure"): la validation doit les accepter, sans quoi la
+# liste est coupee au premier nom exotique.
+FIELD_TOKEN_RE = re.compile(r"[A-Za-z0-9][\w.()\-]*")
 
 # Categories d'enrichissement recherchees dans la liste des champs supportes,
 # avec le nombre maximum de champs retenus par categorie.
@@ -154,11 +156,28 @@ def parse_supported_fields(body: str) -> list[str]:
     are: sme-part,submission-url-lot,...)". On s'en sert pour reconstruire une
     liste correcte au lieu de se rabattre sur le socle minimal.
     """
-    match = SUPPORTED_FIELDS_RE.search(body or "")
-    if not match:
+    if not body:
         return []
-    raw = match.group(1).split(")")[0]
-    return [part.strip() for part in raw.split(",") if part.strip()]
+    start = body.lower().find(SUPPORTED_FIELDS_LABEL)
+    if start < 0:
+        return []
+    tail = body[start + len(SUPPORTED_FIELDS_LABEL):].lstrip()
+    tail = tail[1:] if tail.startswith(":") else tail
+    # La valeur s'arrete a la fin de la chaine JSON du message.
+    tail = re.split(r'(?<!\\)"', tail)[0]
+    tail = tail.strip()
+    if tail.endswith(")"):          # parenthese fermante de "(supported ...)"
+        tail = tail[:-1]
+
+    fields: list[str] = []
+    for part in tail.split(","):
+        token = part.strip().strip(".")
+        if not token or token in fields:
+            continue
+        match = FIELD_TOKEN_RE.fullmatch(token)
+        if match:
+            fields.append(token)
+    return fields
 
 
 def select_extra_fields(supported: list[str], already: list[str]) -> list[str]:
@@ -218,6 +237,8 @@ class TedConnector(Connector):
         self.countries = [str(c).upper() for c in (self.spec.get("countries") or [])]
         #: liste des champs valides annoncee par l'API, si elle a ete observee
         self.supported_fields: list[str] = []
+        #: corps brut de la derniere erreur sur les champs (diagnostic)
+        self.last_fields_error_body: str = ""
 
     # -- construction de la requete experte --------------------------------
     def _dialect_for(self, endpoint: str) -> tuple[str, dict]:
@@ -309,10 +330,14 @@ class TedConnector(Connector):
             if status not in (400, 422) or fields == base:
                 raise
 
-            supported = parse_supported_fields(getattr(exc, "body", "") or str(exc))
+            self.last_fields_error_body = getattr(exc, "body", "") or str(exc)
+            supported = parse_supported_fields(self.last_fields_error_body)
             self.supported_fields = supported
-            if supported:
-                retained = [f for f in base if f in supported] or base
+            # Le socle est connu pour fonctionner: s'il n'apparait pas dans la
+            # liste analysee, c'est que l'analyse a echoue, pas que l'API a
+            # renomme tous ses champs.
+            retained = [f for f in base if f in supported]
+            if supported and retained:
                 extras = select_extra_fields(supported, retained)
                 fallback = retained + extras
                 self.log.warning(
@@ -320,6 +345,13 @@ class TedConnector(Connector):
                     "supportes annonces par l'API. Champs ajoutes: %s",
                     len(fields) - len(retained), len(supported),
                     ", ".join(extras) or "aucun",
+                )
+            elif supported:
+                fallback = base
+                self.log.warning(
+                    "TED a annonce %d champs mais aucun du socle: liste vraisemblablement "
+                    "tronquee ou illisible, repli sur le socle. Inspectez-la avec "
+                    "`veille fields --raw`.", len(supported),
                 )
             else:
                 fallback = base
@@ -417,7 +449,8 @@ class TedConnector(Connector):
             try:
                 self._post(endpoint, body)
             except ConnectorError as exc:
-                supported = parse_supported_fields(getattr(exc, "body", "") or str(exc))
+                self.last_fields_error_body = getattr(exc, "body", "") or str(exc)
+                supported = parse_supported_fields(self.last_fields_error_body)
                 if supported:
                     self.supported_fields = supported
                     return supported

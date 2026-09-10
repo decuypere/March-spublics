@@ -30,7 +30,8 @@ filtering:
   # Poids du calcul de pertinence (voir src/veille_mp/filtering.py).
   weights:
     cpv_exact: 1.0        # code CPV exactement dans la liste
-    cpv_prefix: 0.6       # code CPV dans une famille surveillee (ex: 712xxxxx)
+    cpv_prefix: 0.45      # code CPV d'une famille surveillee mais hors liste
+                          # (ex: 71222100): sous le seuil, un mot-cle est requis
     keyword_title: 0.45   # mot-cle trouve dans le titre
     keyword_body: 0.2     # mot-cle trouve dans la description
     keyword_extra: 0.1    # bonus par mot-cle supplementaire (cumul plafonne)

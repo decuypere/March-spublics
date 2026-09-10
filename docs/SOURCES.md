@@ -111,7 +111,18 @@ Pour inspecter cette liste vous-même :
 ```bash
 veille fields          # résumé par catégorie
 veille fields --all    # liste complète
+veille fields --raw    # réponse brute de l'API (quand l'analyse échoue)
 ```
+
+Si `veille fields` annonce peu de champs et signale qu'aucun champ du socle n'y
+figure, l'analyse a échoué (message tronqué, format inattendu). Le connecteur
+garde alors le socle, qui fonctionne, et le dit dans le journal. `--raw` montre
+la réponse telle quelle.
+
+**Note sur le budget** : sur les avis belges observés, TED ne renvoie pas de
+valeur estimée dans les résultats de recherche, même quand le champ est demandé.
+Le montant figure dans l'avis complet, accessible par le lien. La colonne
+« Budget estimé » reste donc souvent vide, ce n'est pas une erreur du connecteur.
 
 Vous pouvez ensuite figer votre propre liste dans la config (`fields:` sous la
 source `ted`), ce qui court-circuite toute la mécanique de repli.
@@ -251,6 +262,11 @@ beaucoup d'ingénierie hors bâtiment. Ils sont donc affaiblis dans
 | 71240000 | 0.40 | planification de voirie, ouvrages d'art |
 | 71241000 | 0.35 | topographie, géoréférencement, études générales |
 | 71242000 | 0.40 | estimation de coûts hors bâtiment |
+
+Un code appartenant à la famille `712` mais **hors liste** vaut 0.45
+(`weights.cpv_prefix`), soit juste sous le seuil : il faut un mot-clé pour
+passer. C'est ce qui écarte `71222100` (cartographie des zones urbaines, un
+cadastre du bruit) tout en gardant `71230000` (concours d'architecture).
 | 71248000 | 0.35 | pilotage et supervision de chantier (*Projektsteuerung*) |
 
 Exemple concret : un avis en `71240000` intitulé « Mission d'auteurs de projet
