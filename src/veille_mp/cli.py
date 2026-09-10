@@ -2,6 +2,7 @@
 
   veille init                 cree config/config.yaml a partir de l'exemple
   veille doctor               verifie la disponibilite de chaque source
+  veille fields               liste les champs acceptes par l'API TED
   veille test                 veille ponctuelle immediate (sans ecriture en base)
   veille run                  veille complete: collecte + stockage + digest
   veille list                 affiche les avis stockes
@@ -107,6 +108,57 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if failures:
         print(f"\n{failures} source(s) active(s) en echec. La veille continuera "
               "malgre tout avec les sources disponibles.")
+    return 0
+
+
+def cmd_fields(args: argparse.Namespace) -> int:
+    """Liste les champs que l'API TED accepte reellement.
+
+    Utile quand le budget ou la description remontent vides: le connecteur
+    reconstruit sa liste a partir de cette meme information, mais la voir aide
+    a ajuster `fields:` dans la configuration.
+    """
+    config = _bootstrap(args)
+    from .connectors import build_connector
+    from .connectors.ted import EXTRA_FIELD_RULES, MINIMAL_FIELDS, select_extra_fields
+    from .http import HttpClient
+    from .robots import RobotsGate
+
+    specs = [s for s in config.sources if s.get("type") == "ted"
+             and (not args.source or s.get("name") == args.source)]
+    if not specs:
+        print("Aucune source de type 'ted' dans la configuration.")
+        return 1
+
+    http = HttpClient(config.get("http", {}) or {})
+    try:
+        for spec in specs:
+            connector = build_connector(spec, http, RobotsGate(http, enabled=False), config.data)
+            supported = connector.discover_fields()
+            if not supported:
+                print(f"[{spec.get('name')}] l'API n'a pas annonce de liste de champs.")
+                continue
+
+            print(f"\n[{spec.get('name')}] {len(supported)} champs supportes")
+            retained = [f for f in MINIMAL_FIELDS if f in supported]
+            extras = select_extra_fields(supported, retained)
+            print(f"  Socle utilise      : {', '.join(retained) or 'aucun'}")
+            print(f"  Enrichissements    : {', '.join(extras) or 'aucun'}")
+            manquants = [f for f in MINIMAL_FIELDS if f not in supported]
+            if manquants:
+                print(f"  Socle non supporte : {', '.join(manquants)}")
+
+            if args.all:
+                print("\n  Tous les champs supportes:")
+                for name in sorted(supported):
+                    print(f"    {name}")
+            else:
+                for label, pattern, _limit in EXTRA_FIELD_RULES:
+                    found = [f for f in supported if pattern.search(f)]
+                    print(f"  {label:<12}: {', '.join(sorted(found)[:12]) or 'aucun'}")
+                print("\n  (--all pour la liste complete)")
+    finally:
+        http.close()
     return 0
 
 
@@ -304,6 +356,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="verifie l'acces a chaque source")
     p_doctor.add_argument("-s", "--source", help="sources a tester (separees par des virgules)")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_fields = sub.add_parser("fields", help="champs acceptes par l'API TED")
+    p_fields.add_argument("-s", "--source", help="nom de la source TED a interroger")
+    p_fields.add_argument("--all", action="store_true", help="lister tous les champs")
+    p_fields.set_defaults(func=cmd_fields)
 
     p_test = sub.add_parser("test", help="veille ponctuelle immediate (mode test)")
     p_test.add_argument("-s", "--source", help="sources a interroger (defaut: sources activees)")

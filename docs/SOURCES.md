@@ -83,18 +83,38 @@ laissez la liste vide pour couvrir toute l'UE. Ordre de grandeur mesuré :
 ### Champs demandés et repli
 
 L'API n'accepte que des noms de champs qu'elle connaît, et **un seul nom
-inconnu fait échouer toute la requête**. Le connecteur demande donc une liste
-étendue (avec budget estimé et description) et, s'il reçoit un `HTTP 400`,
-retente **une fois** avec un socle réduit plutôt que de perdre la journée.
-Le repli est signalé dans les logs :
+inconnu fait échouer toute la requête**. Observé en production :
 
 ```
-TED a rejete la liste de champs etendue (HTTP 400); repli sur le socle.
+HTTP 400: {"message":"Parameter 'fields' contains unsupported value
+(supported values are: sme-part,touchpoint-gateway-ted-esen,
+submission-url-lot,organisation-...)"}
 ```
 
-Si vous voyez cette ligne, le budget estimé ne remontera pas. Comparez alors
-`MINIMAL_FIELDS` / `EXTRA_FIELDS` dans `src/veille_mp/connectors/ted.py` avec la
-documentation à jour, ou surchargez la liste dans la config (`fields:`).
+Le message d'erreur **liste les champs valides**, et le connecteur s'en sert :
+
+1. il demande une liste étendue (budget estimé, description, variantes d'échéance) ;
+2. sur un `400`, il extrait la liste des champs supportés annoncée par l'API ;
+3. il reconstruit sa requête en gardant le socle valide **plus** les meilleurs
+   candidats de cette liste (`description*`, `estimated-value*`, `*cur*`, `deadline*`) ;
+4. si cette reconstruction échoue encore, il se rabat sur le socle minimal.
+
+Le journal indique ce qui a été retenu :
+
+```
+TED a rejete 6 champ(s); liste reconstruite depuis les 214 champs supportes
+annonces par l'API. Champs ajoutes: description-lot, estimated-value-lot, ...
+```
+
+Pour inspecter cette liste vous-même :
+
+```bash
+veille fields          # résumé par catégorie
+veille fields --all    # liste complète
+```
+
+Vous pouvez ensuite figer votre propre liste dans la config (`fields:` sous la
+source `ted`), ce qui court-circuite toute la mécanique de repli.
 
 ---
 
@@ -240,6 +260,19 @@ pour la transformation d'un immeuble industriel en polyclinique » est conservé
 
 Pour rétablir le comportement d'origine (tout CPV listé conservé d'office),
 videz simplement `cpv_weights`.
+
+### Dilution: les accords-cadres fourre-tout
+
+Second constat de terrain : un avis peut porter **24 codes CPV**, dont un seul
+relève de l'architecture. Exemple réel, conservé à tort avec un score de 1.00 :
+
+> *Raamovereenkomst diensten voor diverse infrastructuurprojecten op gewestwegen*
+> (marché de voirie régionale, 24 codes CPV dont `71220000`)
+
+`filtering.dilution` pénalise le score CPV au-delà de `max_cpv_before_penalty`
+codes (8 par défaut, pénalité 0.55). Un tel avis n'est conservé que s'il annonce
+clairement de l'architecture dans son titre. Mettez `max_cpv_before_penalty: 0`
+pour désactiver la règle.
 
 ---
 

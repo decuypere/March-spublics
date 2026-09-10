@@ -133,6 +133,45 @@ def _extract_url(payload: dict, publication_number: str) -> str:
     return ""
 
 
+SUPPORTED_FIELDS_RE = re.compile(
+    r"supported values are:\s*([A-Za-z0-9_,\-\s]+)", re.IGNORECASE
+)
+
+# Categories d'enrichissement recherchees dans la liste des champs supportes,
+# avec le nombre maximum de champs retenus par categorie.
+EXTRA_FIELD_RULES: tuple[tuple[str, re.Pattern[str], int], ...] = (
+    ("description", re.compile(r"description", re.IGNORECASE), 2),
+    ("montant", re.compile(r"(estimated-value|total-value|^value-)", re.IGNORECASE), 3),
+    ("devise", re.compile(r"(cur|currency)", re.IGNORECASE), 2),
+    ("echeance", re.compile(r"deadline", re.IGNORECASE), 3),
+)
+
+
+def parse_supported_fields(body: str) -> list[str]:
+    """L'API TED liste les champs valides dans son message d'erreur 400.
+
+    Exemple: "Parameter 'fields' contains unsupported value (supported values
+    are: sme-part,submission-url-lot,...)". On s'en sert pour reconstruire une
+    liste correcte au lieu de se rabattre sur le socle minimal.
+    """
+    match = SUPPORTED_FIELDS_RE.search(body or "")
+    if not match:
+        return []
+    raw = match.group(1).split(")")[0]
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def select_extra_fields(supported: list[str], already: list[str]) -> list[str]:
+    """Choisit, parmi les champs supportes, ceux qui apportent le budget, la
+    description et les variantes de date limite."""
+    chosen: list[str] = []
+    for _label, pattern, limit in EXTRA_FIELD_RULES:
+        matches = [f for f in supported
+                   if pattern.search(f) and f not in already and f not in chosen]
+        chosen.extend(matches[:limit])
+    return chosen
+
+
 class TedConnector(Connector):
     type_name = "ted"
 
@@ -177,6 +216,8 @@ class TedConnector(Connector):
         self.page_size = int(self.spec.get("page_size", 100))
         self.max_pages = int(self.spec.get("max_pages", 20))
         self.countries = [str(c).upper() for c in (self.spec.get("countries") or [])]
+        #: liste des champs valides annoncee par l'API, si elle a ete observee
+        self.supported_fields: list[str] = []
 
     # -- construction de la requete experte --------------------------------
     def _dialect_for(self, endpoint: str) -> tuple[str, dict]:
@@ -219,6 +260,7 @@ class TedConnector(Connector):
                 f"{endpoint} -> HTTP {response.status_code}: {response.text[:300]}"
             )
             error.status_code = response.status_code
+            error.body = response.text
             raise error
         try:
             return response.json()
@@ -263,14 +305,37 @@ class TedConnector(Connector):
             return self._fetch_all_pages(endpoint, dialect, dialect_name, query, fields)
         except ConnectorError as exc:
             status = getattr(exc, "status_code", None)
-            fallback = LEGACY_FIELDS if dialect_name == "v3.0" else MINIMAL_FIELDS
-            if status not in (400, 422) or fields == fallback:
+            base = LEGACY_FIELDS if dialect_name == "v3.0" else MINIMAL_FIELDS
+            if status not in (400, 422) or fields == base:
                 raise
-            self.log.warning(
-                "TED a rejete la liste de champs etendue (HTTP %s); repli sur le socle. "
-                "Detail: %s", status, str(exc)[:200],
-            )
-            return self._fetch_all_pages(endpoint, dialect, dialect_name, query, fallback)
+
+            supported = parse_supported_fields(getattr(exc, "body", "") or str(exc))
+            self.supported_fields = supported
+            if supported:
+                retained = [f for f in base if f in supported] or base
+                extras = select_extra_fields(supported, retained)
+                fallback = retained + extras
+                self.log.warning(
+                    "TED a rejete %d champ(s); liste reconstruite depuis les %d champs "
+                    "supportes annonces par l'API. Champs ajoutes: %s",
+                    len(fields) - len(retained), len(supported),
+                    ", ".join(extras) or "aucun",
+                )
+            else:
+                fallback = base
+                self.log.warning(
+                    "TED a rejete la liste de champs etendue (HTTP %s) et n'a pas "
+                    "annonce les champs valides; repli sur le socle. Detail: %s",
+                    status, str(exc)[:200],
+                )
+
+            try:
+                return self._fetch_all_pages(endpoint, dialect, dialect_name, query, fallback)
+            except ConnectorError as retry_exc:
+                if getattr(retry_exc, "status_code", None) not in (400, 422) or fallback == base:
+                    raise
+                self.log.warning("La liste reconstruite a aussi ete rejetee; repli sur le socle.")
+                return self._fetch_all_pages(endpoint, dialect, dialect_name, query, base)
 
     def _fetch_all_pages(self, endpoint: str, dialect: dict, dialect_name: str,
                          query: str, fields: list[str]) -> list[Notice]:
@@ -339,6 +404,27 @@ class TedConnector(Connector):
         )
 
     # -- diagnostic ---------------------------------------------------------
+    def discover_fields(self) -> list[str]:
+        """Interroge l'API avec un nom de champ volontairement invalide pour
+        recuperer la liste des champs valides qu'elle annonce en retour."""
+        start, end = self.date_window()
+        for endpoint in self.endpoints:
+            dialect_name, dialect = self._dialect_for(endpoint)
+            if dialect_name == "v3.0":
+                continue
+            body = dialect["body"](self.build_query(dialect_name, start, end),
+                                   ["__champ-invalide__"], 1, 1)
+            try:
+                self._post(endpoint, body)
+            except ConnectorError as exc:
+                supported = parse_supported_fields(getattr(exc, "body", "") or str(exc))
+                if supported:
+                    self.supported_fields = supported
+                    return supported
+            except Exception:  # noqa: BLE001
+                continue
+        return []
+
     def check(self) -> tuple[bool, str]:
         start, end = self.date_window()
         for endpoint in self.endpoints:

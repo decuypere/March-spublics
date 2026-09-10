@@ -103,6 +103,7 @@ Score entre 0 et 1, seuil configurable (`filtering.min_score`, défaut 0.5) :
 | Signal | Poids par défaut |
 |---|---|
 | CPV cœur de métier (`71200000`, `71220000`, `71221000`…) | 1.0 — l'avis est **toujours** conservé |
+| Avis portant plus de 8 codes CPV (accord-cadre fourre-tout) | pénalité de 0.55 |
 | CPV périphérique (`71240000`, `71241000`, `71242000`, `71248000`) | 0.35 à 0.40 — un mot-clé est nécessaire |
 | CPV dans une famille surveillée (`712…`) mais hors liste | 0.6 |
 | Mot-clé dans le titre | 0.45 (+0.1 par mot-clé supplémentaire) |
@@ -113,6 +114,11 @@ Les codes périphériques sont volontairement affaiblis via `filtering.cpv_weigh
 `71241000` (études de faisabilité) ou `71248000` (supervision de projet) remontent
 beaucoup d'ingénierie pure (voirie, topographie, pilotage de chantier). Un tel avis
 n'est conservé que s'il porte aussi un signal architecture dans son titre.
+
+Même logique pour la **dilution** (`filtering.dilution`) : un accord-cadre portant
+24 codes CPV, dont un seul relève de l'architecture, n'est pas une commande
+d'architecture. Au-delà du seuil, le score CPV est pénalisé et un mot-clé devient
+nécessaire.
 
 La comparaison est insensible à la casse, aux accents, aux ligatures
 (« maîtrise d'œuvre » reconnaît « maitrise d'oeuvre ») et au pluriel
@@ -161,6 +167,7 @@ sources, et rien de ce qui a déjà été collecté n'est perdu. La fenêtre gli
 |---|---|
 | `veille init` | crée `config/config.yaml` depuis l'exemple |
 | `veille doctor` | teste l'accès à chaque source (endpoints, robots.txt) |
+| `veille fields` | liste les champs que l'API TED accepte réellement |
 | `veille test` | **mode test** : veille ponctuelle immédiate, sans écriture |
 | `veille run` | veille complète : collecte, stockage, digest, email |
 | `veille list` | liste les avis stockés (filtres, `--json`) |
@@ -265,7 +272,7 @@ couvrent déjà beaucoup de cas sans programmation.
 ## 9. Tests
 
 ```bash
-pytest -q          # 75 tests, aucun accès réseau
+pytest -q          # 82 tests, aucun accès réseau
 ```
 
 Les tests couvrent : normalisation multilingue eForms, les deux dialectes de
@@ -305,7 +312,8 @@ src/veille_mp/
 - Le connecteur belge `http_search` demande une configuration manuelle de
   l'endpoint : aucune API publique documentée n'a pu être confirmée.
 - TED ne renvoie le budget estimé que sur une partie des avis : la colonne reste
-  souvent vide même quand le champ est demandé.
+  souvent vide même quand le champ est demandé. `veille fields` montre ce que
+  l'API accepte réellement.
 - Les titres TED sont préfixés par le pays et le type de service
   (« Belgique – Services d'architecture – … ») : c'est le format de la source.
 - La déduplication floue suppose un nom d'acheteur écrit de la même façon d'une

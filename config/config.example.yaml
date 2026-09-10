@@ -65,6 +65,15 @@ filtering:
     "71242000": 0.40   # preparation de projet et conception
     "71248000": 0.35   # supervision de projet et documentation
 
+  # Un avis portant beaucoup de codes CPV est generalement un accord-cadre
+  # fourre-tout (ex: "diverses missions sur routes regionales", 24 codes) ou le
+  # code architecture ne pese presque rien. Au-dela du seuil, le score CPV est
+  # penalise: il faut alors un mot-cle pertinent pour que l'avis remonte.
+  # Mettre max_cpv_before_penalty a 0 desactive la regle.
+  dilution:
+    max_cpv_before_penalty: 8
+    penalty: 0.55
+
   # Familles CPV: tout code commencant par un de ces prefixes marque un
   # "cpv_prefix" (pertinence partielle). Vider la liste pour desactiver.
   cpv_prefixes:

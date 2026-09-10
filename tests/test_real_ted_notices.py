@@ -122,3 +122,48 @@ def test_plural_forms_are_matched():
     engine = RelevanceFilter(CFG)
     verdict = engine.evaluate(notice("Selection d'auteurs de projets", ["71240000"]))
     assert verdict.keep
+
+
+# --------------------------------------------------------------------------
+# Deuxieme test terrain (Belgique seule, 14 avis): l'accord-cadre routier
+# --------------------------------------------------------------------------
+ACCORD_CADRE_ROUTIER = (
+    "Belgique - Services d'etudes - WA/INV/2026/2 Raamovereenkomst diensten voor "
+    "diverse infrastructuurprojecten op gewestwegen - Wegen Antwerpen",
+    # 24 codes CPV, dont 71220000 (creation architecturale) noye dans la masse
+    ["79311000", "79930000", "71300000", "73110000", "71311210", "75130000",
+     "71320000", "71311300", "71313400", "71322000", "71322300", "71313440",
+     "71322500", "71355000", "71241000", "45111250", "71242000", "71243000",
+     "71244000", "71247000", "71400000", "71220000", "71000000", "72242000"],
+    "Vlaamse Overheid",
+)
+
+MARCHE_CIBLE = (
+    "Belgique - Services d'architecte pour les batiments - "
+    "Project: Vorselaar, Lepelstraat vervangingsbouw - ontwerpteam",
+    ["71221000"],
+    "LeefGoed BV",
+)
+
+
+def test_catch_all_framework_with_many_cpv_is_rejected():
+    """Un code coeur de metier noye dans 24 CPV ne suffit pas: sans mot-cle
+    architecture dans le titre, l'avis est un accord-cadre d'ingenierie."""
+    engine = RelevanceFilter(CFG)
+    verdict = engine.evaluate(notice(*ACCORD_CADRE_ROUTIER[:2], buyer=ACCORD_CADRE_ROUTIER[2]))
+    assert not verdict.keep
+    assert "fourre-tout" in verdict.reason
+
+
+def test_a_focused_notice_keeps_its_full_score():
+    engine = RelevanceFilter(CFG)
+    verdict = engine.evaluate(notice(*MARCHE_CIBLE[:2], buyer=MARCHE_CIBLE[2]))
+    assert verdict.keep and verdict.score == 1.0
+
+
+def test_dilution_is_lifted_by_an_architecture_keyword():
+    """Un accord-cadre reste conserve s'il annonce clairement de l'architecture."""
+    engine = RelevanceFilter(CFG)
+    titre = "Raamovereenkomst architectuuropdracht voor diverse gebouwen"
+    verdict = engine.evaluate(notice(titre, ACCORD_CADRE_ROUTIER[1], buyer="Vlaamse Overheid"))
+    assert verdict.keep

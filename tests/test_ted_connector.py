@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from veille_mp.connectors.ted import TedConnector
+from veille_mp.connectors.ted import MINIMAL_FIELDS, TedConnector
 from veille_mp.connectors.base import ConnectorError
 from tests.fakes import AllowAllRobots, FakeHttpClient, FakeResponse
 
@@ -236,3 +236,81 @@ def test_persistent_http_400_still_raises():
     connector, _ = build(lambda *a: FakeResponse(status_code=400, payload=None, text="nope"))
     with pytest.raises(ConnectorError, match="Aucun endpoint TED"):
         connector.fetch()
+
+
+def test_supported_field_list_is_parsed_from_the_api_error():
+    from veille_mp.connectors.ted import parse_supported_fields, select_extra_fields
+
+    body = ('{"message":"Parameter \'fields\' contains unsupported value (supported '
+            'values are: sme-part,submission-url-lot,notice-title,buyer-name,'
+            'description-lot,estimated-value-lot,estimated-value-cur-lot,'
+            'deadline-receipt-tender-date-lot,organisation-name)"}')
+    supported = parse_supported_fields(body)
+
+    assert "description-lot" in supported
+    assert "estimated-value-lot" in supported
+    assert "sme-part" in supported
+
+    extras = select_extra_fields(supported, already=["notice-title", "buyer-name"])
+    assert "description-lot" in extras
+    assert "estimated-value-lot" in extras
+    assert "deadline-receipt-tender-date-lot" in extras
+    assert "notice-title" not in extras, "un champ deja demande ne doit pas etre redemande"
+
+
+def test_rejected_fields_are_rebuilt_from_the_supported_list():
+    """Reproduit l'erreur reelle: l'API rejette la liste etendue mais annonce
+    les champs valides. On doit les reutiliser, pas retomber sur le socle nu."""
+    attempts = []
+    supported = (MINIMAL_FIELDS
+                 + ["description-lot", "estimated-value-lot", "estimated-value-cur-lot"])
+
+    def handler(method, url, kwargs):
+        fields = kwargs["json"]["fields"]
+        attempts.append(list(fields))
+        unknown = [f for f in fields if f not in supported]
+        if unknown:
+            return FakeResponse(
+                status_code=400, payload=None,
+                text=("{\"message\":\"Parameter 'fields' contains unsupported value "
+                      "(supported values are: " + ",".join(supported) + ")\"}"),
+            )
+        page = kwargs["json"].get("page", 1)
+        return FakeResponse(payload={"notices": [EFORMS_NOTICE] if page == 1 else []})
+
+    connector, _ = build(handler)
+    notices = connector.fetch()
+
+    assert len(notices) == 1
+    final = attempts[-1]
+    assert "estimated-value-lot" in final, "le budget doit etre recupere apres reconstruction"
+    assert "description-lot" in final
+    assert connector.supported_fields == supported
+
+
+def test_field_rebuild_falls_back_to_the_minimal_set_if_it_fails_too():
+    def handler(method, url, kwargs):
+        fields = kwargs["json"]["fields"]
+        if fields != MINIMAL_FIELDS:
+            return FakeResponse(
+                status_code=400, payload=None,
+                text=("{\"message\":\"unsupported value (supported values are: "
+                      + ",".join(MINIMAL_FIELDS + ["piege-lot"]) + ")\"}"),
+            )
+        page = kwargs["json"].get("page", 1)
+        return FakeResponse(payload={"notices": [EFORMS_NOTICE] if page == 1 else []})
+
+    connector, _ = build(handler)
+    assert len(connector.fetch()) == 1
+
+
+def test_discover_fields_queries_with_an_invalid_field():
+    def handler(method, url, kwargs):
+        return FakeResponse(
+            status_code=400, payload=None,
+            text="unsupported value (supported values are: alpha-lot,beta-lot)",
+        )
+
+    connector, http = build(handler)
+    assert connector.discover_fields() == ["alpha-lot", "beta-lot"]
+    assert http.calls[0][2]["json"]["fields"] == ["__champ-invalide__"]

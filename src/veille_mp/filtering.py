@@ -46,6 +46,12 @@ class RelevanceFilter:
         self.w_kw_extra = float(weights.get("keyword_extra", 0.1))
         self.cpv_exact_always_keep = bool(cfg.get("cpv_exact_always_keep", True))
 
+        # Dilution: un avis portant beaucoup de codes CPV est un accord-cadre
+        # fourre-tout ou le code coeur de metier ne pese presque rien.
+        dilution = cfg.get("dilution") or {}
+        self.dilution_threshold = int(dilution.get("max_cpv_before_penalty", 8))
+        self.dilution_penalty = float(dilution.get("penalty", 0.55))
+
         self.cpv_codes = {clean_cpv(c) for c in (cfg.get("cpv_codes") or []) if clean_cpv(c)}
 
         # Poids par code CPV. Sans surcharge, un code de la liste vaut
@@ -134,6 +140,11 @@ class RelevanceFilter:
         elif prefix:
             cpv_score = self.w_cpv_prefix
 
+        diluted = (self.dilution_threshold > 0
+                   and len(notice.cpv_codes) > self.dilution_threshold)
+        if diluted:
+            cpv_score = max(0.0, cpv_score - self.dilution_penalty)
+
         score = cpv_score
 
         if kw_title:
@@ -146,12 +157,16 @@ class RelevanceFilter:
 
         # Un CPV de poids plein (coeur de metier) garantit la conservation.
         # Un CPV affaibli par cpv_weights doit atteindre le seuil comme les autres.
-        if exact and self.cpv_exact_always_keep and cpv_score >= self.w_cpv_exact:
+        if exact and self.cpv_exact_always_keep and not diluted \
+                and cpv_score >= self.w_cpv_exact:
             return Verdict(True, max(score, cpv_score), exact + prefix, matched_kw,
                            reason=f"CPV coeur de metier ({exact[0]})")
         keep = score >= self.min_score
         if keep:
             reason = f"score {score:.2f} >= seuil {self.min_score:.2f}"
+        elif diluted and exact:
+            reason = (f"accord-cadre fourre-tout ({len(notice.cpv_codes)} codes CPV) "
+                      f"sans mot-cle pertinent (score {score:.2f} < seuil {self.min_score:.2f})")
         elif exact:
             reason = (f"CPV peripherique {exact[0]} sans mot-cle pertinent "
                       f"(score {score:.2f} < seuil {self.min_score:.2f})")
