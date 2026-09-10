@@ -1,0 +1,11 @@
+# Alternative a cron: timer systemd qui declenche un run par jour.
+# Necessite scripts/veille-run.service (voir README).
+[Unit]
+Description=Declenche la veille marches publics une fois par jour
+
+[Timer]
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,235 @@
+# ---------------------------------------------------------------------------
+# Veille marches publics - configuration
+# Copiez ce fichier en config/config.yaml puis adaptez-le.
+# Toutes les valeurs peuvent etre surchargees par variables d'environnement
+# de la forme VEILLE_<CHEMIN_EN_MAJUSCULES> (ex: VEILLE_NOTIFY__EMAIL__PASSWORD).
+# ---------------------------------------------------------------------------
+
+database:
+  # Chemin SQLite (relatif a la racine du projet) ou URL postgresql://...
+  # Seul SQLite est implemente pour l'instant.
+  path: data/veille.sqlite3
+
+http:
+  user_agent: "veille-mp/0.1 (+veille marches publics architecture; contact: change-me@example.com)"
+  timeout_seconds: 45
+  # Throttling: nombre max de requetes par seconde et par domaine.
+  requests_per_second: 1.0
+  max_retries: 4
+  backoff_base_seconds: 2.0
+  # Respect du robots.txt pour tout connecteur de type scraping.
+  respect_robots_txt: true
+
+# ---------------------------------------------------------------------------
+# FILTRAGE
+# ---------------------------------------------------------------------------
+filtering:
+  # Score minimal (0..1) pour qu'un avis soit conserve.
+  min_score: 0.5
+
+  # Poids du calcul de pertinence (voir src/veille_mp/filtering.py).
+  weights:
+    cpv_exact: 1.0        # code CPV exactement dans la liste
+    cpv_prefix: 0.6       # code CPV dans une famille surveillee (ex: 712xxxxx)
+    keyword_title: 0.45   # mot-cle trouve dans le titre
+    keyword_body: 0.2     # mot-cle trouve dans la description
+    keyword_extra: 0.1    # bonus par mot-cle supplementaire (cumul plafonne)
+
+  # Un avis dont un CPV correspond exactement est toujours conserve,
+  # meme si le score pondere passe sous min_score.
+  cpv_exact_always_keep: true
+
+  # Codes CPV cibles (architecture). Modifiables librement.
+  cpv_codes:
+    - "71200000"  # Services d'architecture
+    - "71210000"  # Services de conseil en architecture
+    - "71220000"  # Services de creation architecturale
+    - "71221000"  # Services d'architecte pour batiments
+    - "71222000"  # Services d'architecte pour espaces exterieurs
+    - "71223000"  # Services d'architecte pour projets d'agrandissement de batiments
+    - "71240000"  # Services d'architecture, d'ingenierie et de planification
+    - "71241000"  # Etudes de faisabilite, service de conseil, analyse
+    - "71242000"  # Preparation de projet et conception, estimation des couts
+    - "71248000"  # Supervision du projet et documentation
+    - "71251000"  # Services d'architecture et de controle des batiments
+    - "71420000"  # Services d'architecture paysagere
+
+  # Familles CPV: tout code commencant par un de ces prefixes marque un
+  # "cpv_prefix" (pertinence partielle). Vider la liste pour desactiver.
+  cpv_prefixes:
+    - "712"
+    - "7142"
+
+  # Mots-cles (FR / NL / EN). La comparaison est insensible a la casse
+  # et aux accents, sur les limites de mots.
+  keywords:
+    fr:
+      - "architecture"
+      - "architecte"
+      - "architectural"
+      - "conception"
+      - "maitrise d'oeuvre"
+      - "maitre d'oeuvre"
+      - "auteur de projet"
+      - "esquisse"
+      - "avant-projet"
+      - "concours d'architecture"
+      - "amenagement"
+      - "urbanisme"
+    nl:
+      - "architect"
+      - "architectuur"
+      - "architectuuropdracht"
+      - "bouwkundig ontwerp"
+      - "ontwerpopdracht"
+      - "ontwerper"
+      - "studieopdracht"
+      - "stedenbouw"
+      - "ruimtelijke ordening"
+    en:
+      - "architecture"
+      - "architect"
+      - "architectural design"
+      - "design services"
+      - "urban design"
+
+  # Mots-cles d'exclusion: si presents dans le titre, l'avis est ecarte
+  # (utile pour eliminer le bruit, ex. logiciels "architecture systeme").
+  exclude_keywords:
+    - "architecture logicielle"
+    - "software architecture"
+    - "architecture reseau"
+    - "enterprise architecture"
+    - "it-architectuur"
+
+# ---------------------------------------------------------------------------
+# SOURCES / CONNECTEURS
+# Chaque entree est instanciee par son champ "type" (registre de connecteurs).
+# Ajouter une source = ajouter un bloc ici + une classe dans connectors/.
+# ---------------------------------------------------------------------------
+sources:
+
+  # --- TED (Tenders Electronic Daily, Office des publications de l'UE) ------
+  # API officielle, acces anonyme. Le connecteur detecte automatiquement
+  # le dialecte disponible (api.ted.europa.eu/v3 ou ted.europa.eu/api/v3.0).
+  - name: ted
+    type: ted
+    enabled: true
+    lookback_days: 7          # fenetre glissante (rattrape un jour manque)
+    page_size: 100
+    max_pages: 20
+    # Pays a surveiller (codes ISO 3 lettres pour l'API TED).
+    countries: ["BEL", "LUX", "FRA", "NLD", "DEU"]
+    # Laisser vide pour couvrir toute l'UE:
+    # countries: []
+    # Surcharge manuelle possible de l'expert query (sinon generee depuis
+    # les CPV + pays + fenetre de dates):
+    expert_query: null
+    # Endpoints essayes dans l'ordre; le premier qui repond est retenu.
+    endpoints:
+      - "https://api.ted.europa.eu/v3/notices/search"
+      - "https://ted.europa.eu/api/v3.0/notices/search"
+
+  # --- Bulletin des Adjudications / e-Notification : flux RSS --------------
+  # Connecteur RSS generique. Renseignez les URLs de flux que vous voulez
+  # suivre (ex. flux d'une recherche sauvegardee sur e-Notification).
+  # Verifiez d'abord que le flux existe: `veille doctor`.
+  - name: enot_rss
+    type: rss
+    enabled: false
+    country: BE
+    feeds: []
+    # Exemple:
+    # feeds:
+    #   - "https://www.publicprocurement.be/.../rss?cpv=71200000"
+
+  # --- e-Procurement / e-Notification (SPF BOSA) : recherche HTTP ----------
+  # DESACTIVE PAR DEFAUT. Aucune API publique documentee a ce jour.
+  # Avant activation: lire les CGU, verifier robots.txt (`veille doctor`),
+  # et renseigner ci-dessous l'endpoint reellement disponible.
+  # Le connecteur refuse de tourner si robots.txt interdit le chemin.
+  - name: eprocurement_be
+    type: http_search
+    enabled: false
+    country: BE
+    base_url: "https://www.publicprocurement.be"
+    robots_url: "https://www.publicprocurement.be/robots.txt"
+    method: POST
+    search_path: "/api/search/notices"     # A VERIFIER avant activation
+    request:
+      json:
+        page: 0
+        size: 100
+      # Les placeholders {cpv_csv}, {date_from}, {date_to}, {page} sont
+      # remplaces a l'execution.
+    pagination:
+      page_param: "page"
+      start_page: 0
+      max_pages: 10
+    # Mapping chemin JSON -> champ normalise (notation pointee, [] = liste).
+    mapping:
+      items: "data.items"
+      source_id: "id"
+      title: "title"
+      buyer_name: "buyer.name"
+      url: "url"
+      cpv_codes: "cpv[]"
+      publication_date: "publicationDate"
+      deadline: "deadlineDate"
+      description: "description"
+      region: "buyer.region"
+      value_amount: "estimatedValue.amount"
+      value_currency: "estimatedValue.currency"
+
+  # --- Jeu de donnees d'exemple (hors ligne) -------------------------------
+  # Sert a valider le filtrage sans acces reseau: `veille test --source sample`
+  - name: sample
+    type: sample
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# DEDUPLICATION
+# ---------------------------------------------------------------------------
+dedup:
+  # Priorite des sources en cas de doublon (la 1re gagne et garde le lien).
+  source_priority: ["ted", "eprocurement_be", "enot_rss", "sample"]
+  # Similarite minimale des titres normalises pour un rapprochement flou.
+  title_similarity: 0.92
+
+# ---------------------------------------------------------------------------
+# DIGEST / NOTIFICATIONS
+# ---------------------------------------------------------------------------
+notify:
+  # Formats generes a chaque run dans data/digests/
+  formats: ["html", "csv", "md"]
+  output_dir: data/digests
+  # N'inclure que les avis vus pour la premiere fois lors de ce run.
+  new_only: true
+
+  email:
+    enabled: false
+    smtp_host: "smtp.example.com"
+    smtp_port: 587
+    use_tls: true
+    username: ""
+    password: ""           # preferer VEILLE_NOTIFY__EMAIL__PASSWORD
+    sender: "veille@example.com"
+    recipients: []
+    subject: "[Veille] {count} nouveau(x) marche(s) architecture - {date}"
+    # N'envoie rien si aucun nouveau marche.
+    skip_if_empty: true
+
+# ---------------------------------------------------------------------------
+# PLANIFICATION (mode daemon interne; sinon utilisez cron - voir scripts/)
+# ---------------------------------------------------------------------------
+schedule:
+  daily_at: "07:00"        # heure locale
+  timezone: "Europe/Brussels"
+
+web:
+  host: "127.0.0.1"
+  port: 8080
+
+logging:
+  level: INFO
+  file: data/logs/veille.log

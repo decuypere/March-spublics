@@ -1,0 +1,10 @@
+# Service one-shot declenche par veille.timer.
+[Unit]
+Description=Run unique de la veille marches publics
+
+[Service]
+Type=oneshot
+User=veille
+WorkingDirectory=/opt/March-spublics
+ExecStart=/opt/March-spublics/.venv/bin/veille run --mode daily
+EnvironmentFile=-/etc/veille.env

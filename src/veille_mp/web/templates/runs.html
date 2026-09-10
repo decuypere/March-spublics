@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Executions{% endblock %}
+{% block content %}
+<h2 style="font-size:15px">Historique des executions</h2>
+{% if not runs %}
+<div class="empty">Aucune execution enregistree.</div>
+{% else %}
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>#</th><th>Debut</th><th>Fin</th><th>Mode</th><th>Collectes</th>
+    <th>Retenus</th><th>Nouveaux</th><th>Doublons</th><th>Sources</th><th>Detail</th>
+  </tr></thead>
+  <tbody>
+  {% for run in runs %}
+  <tr>
+    <td>{{ run.id }}</td>
+    <td>{{ run.started_at }}</td>
+    <td>{{ run.finished_at or '(en cours)' }}</td>
+    <td>{{ run.mode }}</td>
+    <td>{{ run.fetched }}</td>
+    <td>{{ run.kept }}</td>
+    <td>{{ run.new_notices }}</td>
+    <td>{{ run.duplicates }}</td>
+    <td><span class="ok">{{ run.sources_ok }} OK</span>
+        {% if run.sources_ko %}<span class="ko"> / {{ run.sources_ko }} KO</span>{% endif %}</td>
+    <td class="muted">
+      {% for detail in details.get(run.id, []) %}
+        <div>
+          <span class="{{ 'ok' if detail.ok else 'ko' }}">{{ 'OK' if detail.ok else 'KO' }}</span>
+          {{ detail.source }} &middot; {{ detail.fetched }} avis
+          {% if detail.error %}<br><span class="ko">{{ detail.error }}</span>{% endif %}
+        </div>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

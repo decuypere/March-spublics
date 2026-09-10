@@ -1,0 +1,15 @@
+# Unite systemd pour l'interface de consultation.
+[Unit]
+Description=Veille marches publics - interface web
+After=network-online.target
+
+[Service]
+Type=simple
+User=veille
+WorkingDirectory=/opt/March-spublics
+ExecStart=/opt/March-spublics/.venv/bin/veille web --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

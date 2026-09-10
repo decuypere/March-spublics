@@ -1,0 +1,21 @@
+# Unite systemd (mode daemon interne).
+# Installation:
+#   sudo cp scripts/veille.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now veille
+[Unit]
+Description=Veille marches publics architecture
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=veille
+WorkingDirectory=/opt/March-spublics
+ExecStart=/opt/March-spublics/.venv/bin/veille daemon
+Restart=on-failure
+RestartSec=60
+# Secrets (mot de passe SMTP, etc.)
+EnvironmentFile=-/etc/veille.env
+
+[Install]
+WantedBy=multi-user.target

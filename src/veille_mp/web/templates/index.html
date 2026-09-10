@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="cards">
+  <div class="card"><div class="n">{{ stats.total }}</div><div class="l">avis suivis</div></div>
+  <div class="card"><div class="n">{{ stats.open }}</div><div class="l">encore ouverts</div></div>
+  <div class="card"><div class="n">{{ stats.duplicates }}</div><div class="l">doublons ecartes</div></div>
+  {% for src, count in stats.by_source.items() %}
+  <div class="card"><div class="n">{{ count }}</div><div class="l">{{ src }}</div></div>
+  {% endfor %}
+</div>
+
+<form class="filters" method="get" action="/">
+  <div><label for="q">Recherche</label>
+    <input id="q" name="q" value="{{ args.get('q','') }}" placeholder="titre, acheteur..."></div>
+  <div><label for="source">Source</label>
+    <select id="source" name="source">
+      <option value="">Toutes</option>
+      {% for src in stats.by_source %}
+      <option value="{{ src }}" {% if args.get('source')==src %}selected{% endif %}>{{ src }}</option>
+      {% endfor %}
+    </select></div>
+  <div><label for="country">Pays</label>
+    <input id="country" name="country" value="{{ args.get('country','') }}" placeholder="BE" size="4"></div>
+  <div><label for="cpv">CPV</label>
+    <input id="cpv" name="cpv" value="{{ args.get('cpv','') }}" placeholder="71200000"></div>
+  <div><label for="new_days">Nouveautes</label>
+    <select id="new_days" name="new_days">
+      <option value="">Toutes periodes</option>
+      {% for d in [1,3,7,30] %}
+      <option value="{{ d }}" {% if args.get('new_days')==d|string %}selected{% endif %}>{{ d }} jour(s)</option>
+      {% endfor %}
+    </select></div>
+  <div><label for="order">Tri</label>
+    <select id="order" name="order">
+      <option value="publication_date" {% if args.get('order')=='publication_date' %}selected{% endif %}>Publication</option>
+      <option value="deadline" {% if args.get('order')=='deadline' %}selected{% endif %}>Date limite</option>
+      <option value="score" {% if args.get('order')=='score' %}selected{% endif %}>Pertinence</option>
+      <option value="first_seen" {% if args.get('order')=='first_seen' %}selected{% endif %}>Detection</option>
+    </select></div>
+  <div><label for="open_only">Ouverts</label>
+    <select id="open_only" name="open_only">
+      <option value="">Tous</option>
+      <option value="1" {% if args.get('open_only')=='1' %}selected{% endif %}>Non echus</option>
+    </select></div>
+  <button type="submit">Filtrer</button>
+  <a class="pill" href="/export.csv?{{ args|urlencode }}">Export CSV</a>
+</form>
+
+<div class="muted" style="margin-bottom:8px">{{ total }} resultat(s)</div>
+
+{% if rows %}
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>Titre</th><th>Pouvoir adjudicateur</th><th>Pays</th><th>CPV</th>
+    <th>Publication</th><th>Date limite</th><th>Budget</th><th>Source</th><th>Score</th>
+  </tr></thead>
+  <tbody>
+  {% for row in rows %}
+  <tr>
+    <td class="t">
+      {% if row.url %}<a href="{{ row.url }}" target="_blank" rel="noopener">{{ row.title }}</a>
+      {% else %}{{ row.title }}{% endif %}
+      {% if row.region %}<div class="muted">{{ row.region }}</div>{% endif %}
+    </td>
+    <td>{{ row.buyer_name or '-' }}</td>
+    <td>{{ row.country or '-' }}</td>
+    <td>{% for c in (row.cpv_codes or '').split(',') if c %}<span class="tag">{{ c }}</span>{% endfor %}</td>
+    <td>{{ row.publication_date or '-' }}</td>
+    <td class="{% if row.deadline and row.deadline < today %}late{% endif %}">{{ row.deadline or '-' }}</td>
+    <td>{% if row.value_amount %}{{ '{:,.0f}'.format(row.value_amount).replace(',',' ') }} {{ row.value_currency }}{% else %}-{% endif %}</td>
+    <td><span class="pill">{{ row.source }}</span></td>
+    <td>{{ '%.2f'|format(row.score or 0) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="pager">
+  {% if page > 1 %}<a class="pill" href="?{{ args|urlencode }}&page={{ page-1 }}">Precedent</a>{% endif %}
+  <span class="muted">Page {{ page }} / {{ pages }}</span>
+  {% if page < pages %}<a class="pill" href="?{{ args|urlencode }}&page={{ page+1 }}">Suivant</a>{% endif %}
+</div>
+{% else %}
+<div class="empty">Aucun avis ne correspond a ces criteres.<br>
+  Lancez <code>veille test</code> ou <code>veille run</code> pour alimenter la base.</div>
+{% endif %}
+{% endblock %}
