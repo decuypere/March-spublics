@@ -23,10 +23,25 @@ Conséquences pratiques :
 
 ## 1. TED — Tenders Electronic Daily
 
-**Ce qui est établi** : l'Office des publications de l'UE expose une API de
-recherche publique destinée aux réutilisateurs, sans authentification ni clé,
-qui accepte les *expert queries* construites sur le site TED. Depuis 2024 les
-avis sont publiés au format **eForms**, dont la structure diffère des anciens XML.
+**Vérifié en production le 2026-09-10** :
+
+```
+OK via https://api.ted.europa.eu/v3/notices/search (dialecte v3)
+242 avis récupérés en 2,2 s sur une fenêtre de 3 jours (BEL LUX FRA NLD DEU)
+```
+
+Requête effectivement envoyée et acceptée :
+
+```
+publication-date>=20260907 AND publication-date<=20260910
+AND classification-cpv IN (71200000 71210000 71220000 71221000 71222000
+    71223000 71240000 71241000 71242000 71248000 71251000 71420000)
+AND buyer-country IN (BEL LUX FRA NLD DEU)
+```
+
+L'API est publique, sans authentification ni clé, et accepte les *expert
+queries* construites sur le site TED. Depuis 2024 les avis sont publiés au
+format **eForms**, dont la structure diffère des anciens XML.
 
 **Ce que fait le connecteur** :
 
@@ -62,7 +77,24 @@ fenêtre. Si aucun endpoint ne répond :
    testée d'abord dans la recherche experte du site TED.
 
 **Réglage utile** : `countries` accepte des codes ISO 3 lettres (`BEL`, `FRA`…) ;
-laissez la liste vide pour couvrir toute l'UE.
+laissez la liste vide pour couvrir toute l'UE. Ordre de grandeur mesuré :
+5 pays sur 3 jours = 242 avis, la Belgique seule en représente une petite part.
+
+### Champs demandés et repli
+
+L'API n'accepte que des noms de champs qu'elle connaît, et **un seul nom
+inconnu fait échouer toute la requête**. Le connecteur demande donc une liste
+étendue (avec budget estimé et description) et, s'il reçoit un `HTTP 400`,
+retente **une fois** avec un socle réduit plutôt que de perdre la journée.
+Le repli est signalé dans les logs :
+
+```
+TED a rejete la liste de champs etendue (HTTP 400); repli sur le socle.
+```
+
+Si vous voyez cette ligne, le budget estimé ne remontera pas. Comparez alors
+`MINIMAL_FIELDS` / `EXTRA_FIELDS` dans `src/veille_mp/connectors/ted.py` avec la
+documentation à jour, ou surchargez la liste dans la config (`fields:`).
 
 ---
 
@@ -187,6 +219,27 @@ indique, flux par flux, le code HTTP et le nombre d'entrées lues.
 Les familles `712` et `7142` sont surveillées en pertinence partielle : un CPV
 voisin non listé (ex. `71230000`, organisation de concours d'architecture)
 remonte s'il est accompagné d'un mot-clé pertinent.
+
+### Codes larges, affaiblis par défaut
+
+Le premier test en production a montré que quatre de ces codes ramènent
+beaucoup d'ingénierie hors bâtiment. Ils sont donc affaiblis dans
+`filtering.cpv_weights` et exigent un signal architecture dans le titre :
+
+| Code | Poids | Bruit observé |
+|---|---|---|
+| 71240000 | 0.40 | planification de voirie, ouvrages d'art |
+| 71241000 | 0.35 | topographie, géoréférencement, études générales |
+| 71242000 | 0.40 | estimation de coûts hors bâtiment |
+| 71248000 | 0.35 | pilotage et supervision de chantier (*Projektsteuerung*) |
+
+Exemple concret : un avis en `71240000` intitulé « Mission d'auteurs de projet
+pour la transformation d'un immeuble industriel en polyclinique » est conservé
+(0.40 + mot-clé titre = 0.85), tandis qu'un avis en `71248000` intitulé
+« Services de gestion de projets de construction » est écarté (0.35).
+
+Pour rétablir le comportement d'origine (tout CPV listé conservé d'office),
+videz simplement `cpv_weights`.
 
 ---
 

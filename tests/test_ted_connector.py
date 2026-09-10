@@ -177,3 +177,62 @@ def test_check_reports_working_endpoint():
     ok, message = connector.check()
     assert ok
     assert "v3.0" in message and "42" in message
+
+
+# --------------------------------------------------------------------------
+# Corrections issues du premier test terrain (2026-09-10)
+# --------------------------------------------------------------------------
+def test_repeated_lot_values_are_deduplicated():
+    """TED repete la region pour chaque lot: 'BE332 | BEL | BE332 | BEL'."""
+    payload = {**EFORMS_NOTICE,
+               "place-of-performance": ["BE332", "BEL", "BE332", "BEL"]}
+
+    def handler(method, url, kwargs):
+        page = kwargs["json"].get("page", 1)
+        return FakeResponse(payload={"notices": [payload] if page == 1 else []})
+
+    connector, _ = build(handler)
+    assert connector.fetch()[0].region == "BE332 | BEL"
+
+
+def test_estimated_value_and_description_fields_are_requested():
+    """Sans ces champs, le budget estime remontait vide sur tous les avis."""
+    sent = {}
+
+    def handler(method, url, kwargs):
+        sent.update(kwargs["json"])
+        return FakeResponse(payload={"notices": []})
+
+    connector, _ = build(handler)
+    connector.fetch()
+    fields = sent["fields"]
+    assert any("estimated-value" in f for f in fields)
+    assert any("description" in f for f in fields)
+
+
+def test_rejected_field_list_falls_back_to_the_minimal_set():
+    """Un nom de champ inconnu fait echouer toute la requete: on retente avec
+    le socle plutot que de perdre la journee."""
+    attempts = []
+
+    def handler(method, url, kwargs):
+        fields = kwargs["json"]["fields"]
+        attempts.append(fields)
+        if any("estimated-value" in f for f in fields):
+            return FakeResponse(status_code=400, payload=None,
+                                text="unknown field: estimated-value-lot")
+        page = kwargs["json"].get("page", 1)
+        return FakeResponse(payload={"notices": [EFORMS_NOTICE] if page == 1 else []})
+
+    connector, _ = build(handler)
+    notices = connector.fetch()
+
+    assert len(notices) == 1, "le repli doit produire des avis"
+    assert len(attempts) >= 2
+    assert not any("estimated-value" in f for f in attempts[-1])
+
+
+def test_persistent_http_400_still_raises():
+    connector, _ = build(lambda *a: FakeResponse(status_code=400, payload=None, text="nope"))
+    with pytest.raises(ConnectorError, match="Aucun endpoint TED"):
+        connector.fetch()

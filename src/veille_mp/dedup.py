@@ -26,8 +26,17 @@ class Deduplicator:
         except ValueError:
             return len(self.priority)
 
+    @staticmethod
+    def _fingerprint_is_reliable(notice: Notice) -> bool:
+        """Une empreinte batie sur un titre generique sans acheteur ni echeance
+        rapprocherait des marches sans rapport: on ne l'utilise pas."""
+        if len(normalize(notice.title)) < 15:
+            return False
+        return bool(normalize(notice.buyer_name)) or notice.deadline is not None
+
     def _similar(self, a: Notice, b: Notice) -> bool:
-        if normalize(a.buyer_name) != normalize(b.buyer_name):
+        buyer = normalize(a.buyer_name)
+        if not buyer or buyer != normalize(b.buyer_name):
             return False
         ta, tb = normalize(a.title), normalize(b.title)
         if not ta or not tb:
@@ -51,15 +60,21 @@ class Deduplicator:
 
         for notice in ordered:
             fingerprint = notice.dedup_key()
+            # Une empreinte faible (titre generique sans acheteur ni echeance)
+            # rapprocherait des marches sans rapport: on ne s'en sert pas.
+            reliable = self._fingerprint_is_reliable(notice)
+            existing: str | None = None
 
-            # 1. doublon dans le lot courant
-            existing = canonical_by_fingerprint.get(fingerprint)
-            # 2. doublon avec l'historique en base
-            if existing is None and self.db is not None:
-                stored = self.db.canonical_for_dedup_key(fingerprint)
-                if stored and stored != notice.key:
-                    existing = stored
-            # 3. rapprochement flou sur le titre (meme acheteur)
+            if reliable:
+                # 1. doublon dans le lot courant
+                existing = canonical_by_fingerprint.get(fingerprint)
+                # 2. doublon avec l'historique en base
+                if existing is None and self.db is not None:
+                    stored = self.db.canonical_for_dedup_key(fingerprint)
+                    if stored and stored != notice.key:
+                        existing = stored
+            # 3. rapprochement flou sur le titre: entre sources differentes
+            #    seulement, et uniquement si l'acheteur est reellement connu
             if existing is None:
                 for other in canonical_notices:
                     if other.source != notice.source and self._similar(other, notice):
@@ -70,7 +85,8 @@ class Deduplicator:
                 result[notice.key] = existing
             else:
                 result[notice.key] = None
-                canonical_by_fingerprint.setdefault(fingerprint, notice.key)
+                if reliable:
+                    canonical_by_fingerprint.setdefault(fingerprint, notice.key)
                 canonical_notices.append(notice)
 
         return result

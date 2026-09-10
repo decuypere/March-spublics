@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 from .models import Notice
 from .textutil import normalize
@@ -46,6 +47,16 @@ class RelevanceFilter:
         self.cpv_exact_always_keep = bool(cfg.get("cpv_exact_always_keep", True))
 
         self.cpv_codes = {clean_cpv(c) for c in (cfg.get("cpv_codes") or []) if clean_cpv(c)}
+
+        # Poids par code CPV. Sans surcharge, un code de la liste vaut
+        # "cpv_exact". Permet de distinguer le coeur de metier (services
+        # d'architecture) des codes peripheriques (etudes, supervision) qui
+        # ramenent beaucoup d'ingenierie pure et exigent donc un mot-cle.
+        self.cpv_weights: dict[str, float] = {}
+        for code, weight in (cfg.get("cpv_weights") or {}).items():
+            cleaned = clean_cpv(code)
+            if cleaned:
+                self.cpv_weights[cleaned] = float(weight)
         self.cpv_prefixes = tuple(
             str(p).strip() for p in (cfg.get("cpv_prefixes") or []) if str(p).strip()
         )
@@ -72,11 +83,22 @@ class RelevanceFilter:
 
     # -- helpers ----------------------------------------------------------
     @staticmethod
-    def _contains(haystack: str, needle: str) -> bool:
-        """Correspondance sur limites de mots (evite 'art' dans 'depart')."""
+    @lru_cache(maxsize=512)
+    def _pattern(needle: str) -> re.Pattern[str]:
+        """Motif sur limites de mots (evite 'art' dans 'depart'), tolerant au
+        pluriel de chaque mot ('auteurs de projet' reconnait 'auteur de projet')."""
+        words = [re.escape(word) + "s?" for word in needle.split()]
+        return re.compile(r"(?<![a-z0-9])" + r"\s+".join(words) + r"(?![a-z0-9])")
+
+    @classmethod
+    def _contains(cls, haystack: str, needle: str) -> bool:
         if not needle or not haystack:
             return False
-        return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", haystack) is not None
+        return cls._pattern(needle).search(haystack) is not None
+
+    def cpv_weight(self, code: str) -> float:
+        """Poids du code, surcharge par cpv_weights si presente."""
+        return self.cpv_weights.get(code, self.w_cpv_exact)
 
     def cpv_match(self, codes: list[str]) -> tuple[list[str], list[str]]:
         exact, prefix = [], []
@@ -88,6 +110,8 @@ class RelevanceFilter:
                 exact.append(code)
             elif self.cpv_prefixes and code.startswith(self.cpv_prefixes):
                 prefix.append(code)
+        # Le code le plus specifique d'abord: il porte le score.
+        exact.sort(key=self.cpv_weight, reverse=True)
         return exact, prefix
 
     # -- API --------------------------------------------------------------
@@ -104,11 +128,13 @@ class RelevanceFilter:
         kw_title = [k for k in self.keywords if self._contains(title_norm, k)]
         kw_body = [k for k in self.keywords if k not in kw_title and self._contains(body_norm, k)]
 
-        score = 0.0
+        cpv_score = 0.0
         if exact:
-            score += self.w_cpv_exact
+            cpv_score = self.cpv_weight(exact[0])
         elif prefix:
-            score += self.w_cpv_prefix
+            cpv_score = self.w_cpv_prefix
+
+        score = cpv_score
 
         if kw_title:
             score += self.w_kw_title + self.w_kw_extra * (len(kw_title) - 1)
@@ -118,11 +144,19 @@ class RelevanceFilter:
         score = max(0.0, min(1.0, score))
         matched_kw = kw_title + kw_body
 
-        if exact and self.cpv_exact_always_keep:
-            return Verdict(True, max(score, self.w_cpv_exact), exact + prefix, matched_kw,
-                           reason="CPV exact")
+        # Un CPV de poids plein (coeur de metier) garantit la conservation.
+        # Un CPV affaibli par cpv_weights doit atteindre le seuil comme les autres.
+        if exact and self.cpv_exact_always_keep and cpv_score >= self.w_cpv_exact:
+            return Verdict(True, max(score, cpv_score), exact + prefix, matched_kw,
+                           reason=f"CPV coeur de metier ({exact[0]})")
         keep = score >= self.min_score
-        reason = "score >= seuil" if keep else f"score {score:.2f} < seuil {self.min_score:.2f}"
+        if keep:
+            reason = f"score {score:.2f} >= seuil {self.min_score:.2f}"
+        elif exact:
+            reason = (f"CPV peripherique {exact[0]} sans mot-cle pertinent "
+                      f"(score {score:.2f} < seuil {self.min_score:.2f})")
+        else:
+            reason = f"score {score:.2f} < seuil {self.min_score:.2f}"
         return Verdict(keep, score, exact + prefix, matched_kw, reason=reason)
 
     def apply(self, notices: list[Notice]) -> tuple[list[Notice], list[tuple[Notice, Verdict]]]:

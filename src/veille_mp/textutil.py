@@ -14,8 +14,23 @@ _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9 ]+")
 _TAG_RE = re.compile(r"<[^>]+>")
 
+# NFKD ne decompose pas les ligatures: sans cette table, "maitrise d'oeuvre"
+# ne reconnait pas "maitrise d'œuvre", pourtant frequent dans les avis.
+LIGATURES = {
+    "\u0153": "oe", "\u0152": "oe",   # oe
+    "\u00e6": "ae", "\u00c6": "ae",   # ae
+    "\u00df": "ss",                    # eszett
+    "\u0131": "i",                     # i sans point
+    "\u00f8": "o", "\u00d8": "o",     # o barre
+    "\u0142": "l", "\u0141": "l",     # l barre
+    "\u0111": "d", "\u0110": "d",     # d barre
+}
+
 
 def strip_accents(value: str) -> str:
+    for source, target in LIGATURES.items():
+        if source in value:
+            value = value.replace(source, target)
     decomposed = unicodedata.normalize("NFKD", value)
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 

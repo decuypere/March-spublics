@@ -54,6 +54,17 @@ filtering:
     - "71251000"  # Services d'architecture et de controle des batiments
     - "71420000"  # Services d'architecture paysagere
 
+  # Poids par code CPV (0..1). Sans entree ici, un code de la liste ci-dessus
+  # vaut "cpv_exact" (1.0) et l'avis est conserve d'office.
+  # Les codes ci-dessous sont larges: ils remontent beaucoup d'ingenierie pure
+  # (voirie, ouvrages d'art, topographie, pilotage de chantier). On les
+  # affaiblit pour qu'un mot-cle pertinent soit necessaire.
+  cpv_weights:
+    "71240000": 0.40   # architecture, ingenierie ET planification
+    "71241000": 0.35   # etudes de faisabilite, conseil, analyse
+    "71242000": 0.40   # preparation de projet et conception
+    "71248000": 0.35   # supervision de projet et documentation
+
   # Familles CPV: tout code commencant par un de ces prefixes marque un
   # "cpv_prefix" (pertinence partielle). Vider la liste pour desactiver.
   cpv_prefixes:
@@ -96,11 +107,19 @@ filtering:
   # Mots-cles d'exclusion: si presents dans le titre, l'avis est ecarte
   # (utile pour eliminer le bruit, ex. logiciels "architecture systeme").
   exclude_keywords:
+    # Faux amis informatiques
     - "architecture logicielle"
     - "software architecture"
     - "architecture reseau"
     - "enterprise architecture"
     - "it-architectuur"
+    # Ingenierie hors batiment (observe sur les avis TED reels).
+    # Commentez une ligne si vous voulez couvrir ce domaine.
+    - "topographique"
+    - "georeferencement"
+    - "verkehrsanlagen"
+    - "ouvrages d art"
+    - "assainissement"
 
 # ---------------------------------------------------------------------------
 # SOURCES / CONNECTEURS
@@ -119,7 +138,9 @@ sources:
     page_size: 100
     max_pages: 20
     # Pays a surveiller (codes ISO 3 lettres pour l'API TED).
-    countries: ["BEL", "LUX", "FRA", "NLD", "DEU"]
+    # Commencez par la Belgique: elargissez seulement si vous candidatez
+    # reellement a l'etranger (5 pays = environ 240 avis / 3 jours).
+    countries: ["BEL"]
     # Laisser vide pour couvrir toute l'UE:
     # countries: []
     # Surcharge manuelle possible de l'expert query (sinon generee depuis

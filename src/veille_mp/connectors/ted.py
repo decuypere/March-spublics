@@ -36,7 +36,10 @@ ISO3_TO_ISO2 = {
     "CHE": "CH", "GBR": "GB",
 }
 
-DEFAULT_FIELDS = [
+# Champs demandes a l'API. MINIMAL_FIELDS est le socle sur lequel on se replie
+# si l'API rejette un nom de champ (HTTP 400): mieux vaut un avis sans budget
+# qu'aucun avis. EXTRA_FIELDS apporte le budget estime et la description.
+MINIMAL_FIELDS = [
     "publication-number",
     "notice-title",
     "buyer-name",
@@ -48,6 +51,17 @@ DEFAULT_FIELDS = [
     "links",
     "place-of-performance",
 ]
+
+EXTRA_FIELDS = [
+    "description-lot",
+    "description-procedure",
+    "estimated-value-lot",
+    "estimated-value-cur-lot",
+    "total-value",
+    "notice-identifier",
+]
+
+DEFAULT_FIELDS = MINIMAL_FIELDS + EXTRA_FIELDS
 
 LEGACY_FIELDS = ["ND", "TI", "PD", "CY", "AA", "CPV", "DT", "TD", "RC", "URI_DOC"]
 
@@ -77,6 +91,17 @@ def _find(payload: dict, kind: str) -> Any:
             if pattern.search(str(key)) and value not in (None, "", [], {}):
                 return value
     return None
+
+
+def _dedupe_parts(text: str) -> str:
+    """TED repete les memes valeurs pour chaque lot: on ne garde qu'une
+    occurrence de chaque, dans l'ordre d'apparition."""
+    seen: list[str] = []
+    for part in text.split(" | "):
+        part = part.strip()
+        if part and part not in seen:
+            seen.append(part)
+    return " | ".join(seen)
 
 
 def _extract_url(payload: dict, publication_number: str) -> str:
@@ -190,9 +215,11 @@ class TedConnector(Connector):
         response = self.http.post(endpoint, json=body,
                                   headers={"Content-Type": "application/json"})
         if response.status_code >= 400:
-            raise ConnectorError(
+            error = ConnectorError(
                 f"{endpoint} -> HTTP {response.status_code}: {response.text[:300]}"
             )
+            error.status_code = response.status_code
+            raise error
         try:
             return response.json()
         except ValueError as exc:
@@ -217,7 +244,9 @@ class TedConnector(Connector):
             self.log.info("TED [%s] %s | %s", dialect_name, endpoint, query)
 
             try:
-                notices = self._fetch_all_pages(endpoint, dialect, dialect_name, query, fields)
+                notices = self._fetch_with_field_fallback(
+                    endpoint, dialect, dialect_name, query, fields
+                )
             except Exception as exc:  # noqa: BLE001 - on essaie l'endpoint suivant
                 errors.append(f"{endpoint}: {exc}")
                 self.log.warning("Endpoint TED indisponible (%s), essai suivant", exc)
@@ -225,6 +254,23 @@ class TedConnector(Connector):
             return notices
 
         raise ConnectorError("Aucun endpoint TED disponible. " + " | ".join(errors))
+
+    def _fetch_with_field_fallback(self, endpoint: str, dialect: dict, dialect_name: str,
+                                   query: str, fields: list[str]) -> list[Notice]:
+        """Un nom de champ inconnu fait echouer toute la requete. Dans ce cas
+        on retente une fois avec le socle de champs, au lieu de perdre le run."""
+        try:
+            return self._fetch_all_pages(endpoint, dialect, dialect_name, query, fields)
+        except ConnectorError as exc:
+            status = getattr(exc, "status_code", None)
+            fallback = LEGACY_FIELDS if dialect_name == "v3.0" else MINIMAL_FIELDS
+            if status not in (400, 422) or fields == fallback:
+                raise
+            self.log.warning(
+                "TED a rejete la liste de champs etendue (HTTP %s); repli sur le socle. "
+                "Detail: %s", status, str(exc)[:200],
+            )
+            return self._fetch_all_pages(endpoint, dialect, dialect_name, query, fallback)
 
     def _fetch_all_pages(self, endpoint: str, dialect: dict, dialect_name: str,
                          query: str, fields: list[str]) -> list[Notice]:
@@ -277,18 +323,18 @@ class TedConnector(Connector):
         return Notice(
             source=self.name,
             source_id=publication_number or coerce_text(payload.get("id")) or coerce_text(title)[:80],
-            title=title,
+            title=_dedupe_parts(title),
             url=_extract_url(payload, publication_number),
-            buyer_name=buyer,
+            buyer_name=_dedupe_parts(buyer),
             country=country,
-            region=coerce_text(_find(payload, "region"))[:200],
+            region=_dedupe_parts(coerce_text(_find(payload, "region")))[:200],
             cpv_codes=cpv_codes,
             publication_date=parse_date(_find(payload, "publication_date")),
             deadline=parse_date(_find(payload, "deadline")),
             value_amount=parse_amount(_find(payload, "value")),
             value_currency=currency,
             notice_type=coerce_text(_find(payload, "notice_type"))[:120],
-            description=coerce_text(_find(payload, "description"))[:5000],
+            description=_dedupe_parts(coerce_text(_find(payload, "description")))[:5000],
             raw=payload,
         )
 
@@ -297,7 +343,7 @@ class TedConnector(Connector):
         start, end = self.date_window()
         for endpoint in self.endpoints:
             dialect_name, dialect = self._dialect_for(endpoint)
-            fields = LEGACY_FIELDS if dialect_name == "v3.0" else DEFAULT_FIELDS
+            fields = LEGACY_FIELDS if dialect_name == "v3.0" else MINIMAL_FIELDS
             body = dialect["body"](self.build_query(dialect_name, start, end), fields, 1, 1)
             try:
                 payload = self._post(endpoint, body)

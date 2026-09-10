@@ -46,15 +46,15 @@ Aucune dépendance lourde, pas de conteneur requis, pas de clé d'API.
 
 | Source | Accès | Statut |
 |---|---|---|
-| **TED** (Office des publications de l'UE) | API de recherche officielle, anonyme, sans clé | Connecteur prêt, **activé par défaut** |
+| **TED** (Office des publications de l'UE) | API de recherche officielle, anonyme, sans clé | **Vérifié en production** le 2026-09-10 : `api.ted.europa.eu/v3`, dialecte v3 |
 | **e-Notification / e-Procurement** (SPF BOSA) | Pas d'API publique documentée à ce jour | Connecteur `http_search` **désactivé par défaut**, à configurer après vérification |
 | **Bulletin des Adjudications** | Flux RSS selon les recherches sauvegardées | Connecteur `rss` **désactivé par défaut**, à alimenter avec vos URLs de flux |
 
-L'environnement de développement utilisé pour écrire ce code n'avait **pas** d'accès
-réseau sortant vers `ted.europa.eu` ni `publicprocurement.be` (politique de proxy).
-Les connecteurs n'ont donc **pas** pu être validés contre les serveurs en production :
-ils sont couverts par des tests qui simulent les réponses, et la vérification
-terrain se fait chez vous avec :
+Le connecteur TED a été **confirmé fonctionnel sur l'API de production**
+(endpoint `https://api.ted.europa.eu/v3/notices/search`, dialecte v3, 242 avis
+récupérés sur une fenêtre de 3 jours). Les connecteurs belges, eux, n'ont pas pu
+être validés : ils sont couverts par des tests qui simulent les réponses, et la
+vérification terrain se fait chez vous avec :
 
 ```bash
 veille doctor
@@ -102,13 +102,21 @@ Score entre 0 et 1, seuil configurable (`filtering.min_score`, défaut 0.5) :
 
 | Signal | Poids par défaut |
 |---|---|
-| CPV exactement dans la liste | 1.0 — l'avis est **toujours** conservé |
-| CPV dans une famille surveillée (`712…`) | 0.6 |
+| CPV cœur de métier (`71200000`, `71220000`, `71221000`…) | 1.0 — l'avis est **toujours** conservé |
+| CPV périphérique (`71240000`, `71241000`, `71242000`, `71248000`) | 0.35 à 0.40 — un mot-clé est nécessaire |
+| CPV dans une famille surveillée (`712…`) mais hors liste | 0.6 |
 | Mot-clé dans le titre | 0.45 (+0.1 par mot-clé supplémentaire) |
 | Mot-clé dans la description | 0.2 |
 | Mot-clé d'exclusion | rejet immédiat |
 
-La comparaison est insensible à la casse et aux accents, sur des limites de mots
+Les codes périphériques sont volontairement affaiblis via `filtering.cpv_weights` :
+`71241000` (études de faisabilité) ou `71248000` (supervision de projet) remontent
+beaucoup d'ingénierie pure (voirie, topographie, pilotage de chantier). Un tel avis
+n'est conservé que s'il porte aussi un signal architecture dans son titre.
+
+La comparaison est insensible à la casse, aux accents, aux ligatures
+(« maîtrise d'œuvre » reconnaît « maitrise d'oeuvre ») et au pluriel
+(« auteurs de projet » reconnaît « auteur de projet »), sur des limites de mots
 (« architecte » ne matche pas « départ »). Le double filet CPV + mots-clés est
 volontaire : les avis belges sont souvent mal codés côté CPV.
 
@@ -121,7 +129,13 @@ Un même marché publié sur TED et sur e-Notification est regroupé :
 
 1. empreinte `acheteur + titre + date limite` (normalisés) ;
 2. rapprochement avec l'historique déjà en base ;
-3. rapprochement flou sur le titre (ratio ≥ 0.92) au sein d'un même acheteur.
+3. rapprochement flou sur le titre (ratio ≥ 0.92), entre sources différentes
+   et seulement si l'acheteur est réellement renseigné.
+
+Deux garde-fous évitent les faux doublons : une empreinte bâtie sur un titre
+générique sans acheteur ni échéance n'est pas utilisée, et le rapprochement flou
+ne s'applique jamais au sein d'une même source (un numéro de publication TED
+identifie déjà le marché de façon unique).
 
 L'avis de la source la plus prioritaire (`dedup.source_priority`) reste canonique ;
 les autres sont conservés en base mais marqués `duplicate_of` et masqués des listes.
@@ -251,13 +265,17 @@ couvrent déjà beaucoup de cas sans programmation.
 ## 9. Tests
 
 ```bash
-pytest -q          # 53 tests, aucun accès réseau
+pytest -q          # 75 tests, aucun accès réseau
 ```
 
 Les tests couvrent : normalisation multilingue eForms, les deux dialectes de
 l'API TED (avec bascule d'endpoint), le filtrage CPV/mots-clés, la déduplication
 inter-sources, l'historique, l'isolation des erreurs de source, le blocage par
 `robots.txt`, et la génération des digests.
+
+`tests/test_real_ted_notices.py` rejoue des avis TED **réellement renvoyés par
+l'API** : c'est le filet qui garantit que le filtrage discrimine sur des données
+de production, et pas seulement sur des fixtures.
 
 ---
 
@@ -286,6 +304,10 @@ src/veille_mp/
 
 - Le connecteur belge `http_search` demande une configuration manuelle de
   l'endpoint : aucune API publique documentée n'a pu être confirmée.
+- TED ne renvoie le budget estimé que sur une partie des avis : la colonne reste
+  souvent vide même quand le champ est demandé.
+- Les titres TED sont préfixés par le pays et le type de service
+  (« Belgique – Services d'architecture – … ») : c'est le format de la source.
 - La déduplication floue suppose un nom d'acheteur écrit de la même façon d'une
   source à l'autre ; les variantes fortes (« Ville de Namur » / « Namur, Ville de »)
   passent par l'empreinte titre + échéance seulement.
